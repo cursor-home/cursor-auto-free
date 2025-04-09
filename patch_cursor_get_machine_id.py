@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Cursor 机器码补丁工具
+
+这个脚本用于修改 Cursor 编辑器的机器码生成逻辑，以解决激活和授权问题。
+主要功能包括：
+1. 根据操作系统定位 Cursor 安装路径
+2. 备份和修改 Cursor 的核心文件
+3. 替换机器码生成算法，使其返回固定值
+4. 支持恢复原始文件的功能
+
+使用方法：
+- 运行脚本进行补丁安装: python patch_cursor_get_machine_id.py
+- 使用 --restore 参数恢复原始文件: python patch_cursor_get_machine_id.py --restore
+
+注意：修改软件文件可能违反软件使用协议，请在了解相关风险后使用。
+"""
 
 import json
 import logging
@@ -121,25 +137,38 @@ def version_check(version: str, min_version: str = "", max_version: str = "") ->
     Returns:
         bool: 版本号是否符合要求
     """
+    # 版本号格式: 主版本.次版本.修订版本 (例如: 1.2.3)
     version_pattern = r"^\d+\.\d+\.\d+$"
     try:
+        # 检查版本号格式是否正确
+        # 有效的版本号示例: "1.0.0", "2.3.5", "10.2.1"
+        # 无效的版本号示例: "1.0", "1.0.0.1", "v1.0.0", "1.0.a"
         if not re.match(version_pattern, version):
             logger.error(f"无效的版本号格式: {version}")
             return False
 
         def parse_version(ver: str) -> Tuple[int, ...]:
+            # 将版本号字符串转换为元组，例如:
+            # "1.2.3" -> (1, 2, 3)
+            # "10.0.1" -> (10, 0, 1)
             return tuple(map(int, ver.split(".")))
 
         current = parse_version(version)
 
+        # 检查最小版本要求
+        # 例如: 当前版本 "1.2.3", 最小要求 "1.3.0" -> 不满足要求
         if min_version and current < parse_version(min_version):
             logger.error(f"版本号 {version} 小于最小要求 {min_version}")
             return False
 
+        # 检查最大版本要求
+        # 例如: 当前版本 "2.0.0", 最大要求 "1.9.9" -> 不满足要求
         if max_version and current > parse_version(max_version):
             logger.error(f"版本号 {version} 大于最大要求 {max_version}")
             return False
 
+        # 版本检查通过的示例:
+        # 当前版本 "1.5.0", 最小要求 "1.0.0", 最大要求 "2.0.0" -> 满足要求
         return True
 
     except Exception as e:
@@ -149,16 +178,20 @@ def version_check(version: str, min_version: str = "", max_version: str = "") ->
 
 def modify_main_js(main_path: str) -> bool:
     """
-    修改 main.js 文件
-
+    修改 main.js 文件，绕过Cursor的机器码验证机制
+    
+    主要功能：替换getMachineId和getMacMachineId函数的实现，
+    使这些函数不再使用真实的机器码，而是直接返回一个固定值，
+    从而绕过Cursor的授权和激活检查
+    
     Args:
         main_path: main.js 文件路径
-
+    
     Returns:
         bool: 修改是否成功
     """
     try:
-        # 获取原始文件的权限和所有者信息
+        # 获取原始文件的权限和所有者信息，以便修改后保持一致
         original_stat = os.stat(main_path)
         original_mode = original_stat.st_mode
         original_uid = original_stat.st_uid
@@ -168,23 +201,38 @@ def modify_main_js(main_path: str) -> bool:
             with open(main_path, "r", encoding="utf-8") as main_file:
                 content = main_file.read()
 
-            # 执行替换
+
+            # 执行替换 - 这是核心修改部分
+            # 以下正则表达式模式和替换规则是绕过Cursor机器码验证的关键
             patterns = {
+                # 替换getMachineId函数：
+                # - 原函数格式：async getMachineId(){return 真实获取机器码的逻辑 ?? 后备值}
+                # - 修改后格式：async getMachineId(){return 后备值} 
+                # - 这样直接跳过了真实机器码获取逻辑，使用后备值作为机器ID
                 r"async getMachineId\(\)\{return [^??]+\?\?([^}]+)\}": r"async getMachineId(){return \1}",
+                
+                # 替换getMacMachineId函数（针对Mac系统的特殊处理）：
+                # - 原理同上，但处理的是Mac系统特有的机器码获取函数
+                # - [^??]+ 匹配??前的所有内容（真实获取机器码的逻辑）
+                # - ([^}]+) 捕获??后的内容（后备值）
+                # - 修改后直接返回这个后备值
                 r"async getMacMachineId\(\)\{return [^??]+\?\?([^}]+)\}": r"async getMacMachineId(){return \1}",
             }
 
+            # 应用所有替换模式，使用正则表达式修改代码
             for pattern, replacement in patterns.items():
                 content = re.sub(pattern, replacement, content)
 
+            # 将修改后的内容写入临时文件
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
-        # 使用 shutil.copy2 保留文件权限
+        # 创建原文件的.old备份
         shutil.copy2(main_path, main_path + ".old")
+        # 用修改后的内容替换原文件
         shutil.move(tmp_path, main_path)
 
-        # 恢复原始文件的权限和所有者
+        # 恢复原始文件的权限和所有者，确保修改后的文件属性与原文件一致
         os.chmod(main_path, original_mode)
         if os.name != "nt":  # 在非Windows系统上设置所有者
             os.chown(main_path, original_uid, original_gid)
@@ -194,6 +242,7 @@ def modify_main_js(main_path: str) -> bool:
 
     except Exception as e:
         logger.error(f"修改文件时发生错误: {str(e)}")
+        # 清理临时文件（如果存在）
         if "tmp_path" in locals():
             os.unlink(tmp_path)
         return False

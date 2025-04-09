@@ -7,7 +7,10 @@ import os
 
 
 def get_extension_path():
-    """获取插件路径"""
+    """获取插件路径
+    根据运行环境（开发环境或打包环境）返回正确的插件路径
+    在打包环境中，插件路径会被包含在 _MEIPASS 目录中
+    """
     root_dir = os.getcwd()
     extension_path = os.path.join(root_dir, "turnstilePatch")
 
@@ -26,6 +29,15 @@ def get_extension_path():
 
 
 def get_browser_options():
+    """配置浏览器选项
+    设置浏览器参数，包括：
+    - 加载 turnstile 插件
+    - 设置用户代理
+    - 禁用凭据服务
+    - 隐藏崩溃恢复提示
+    - 自动设置端口
+    - Mac系统特殊处理（禁用沙箱和GPU加速）
+    """
     co = ChromiumOptions()
     try:
         extension_path = get_extension_path()
@@ -49,13 +61,29 @@ def get_browser_options():
 
 
 def get_veri_code(username):
+    """获取验证码的主函数
+    通过临时邮箱服务获取验证码的完整流程：
+    1. 初始化浏览器
+    2. 访问临时邮箱网站
+    3. 设置邮箱用户名
+    4. 等待并获取新邮件
+    5. 提取验证码
+    6. 清理邮件
+    7. 关闭浏览器
+    
+    Args:
+        username: 要使用的临时邮箱用户名
+        
+    Returns:
+        str: 提取到的验证码，如果失败则返回 None
+    """
     # 使用相同的浏览器配置
     co = get_browser_options()
     browser = Chromium(co)
     code = None
 
     try:
-        # 获取当前标签页
+        # 获取当前标签页并重置 turnstile
         tab = browser.latest_tab
         tab.run_js("try { turnstile.reset() } catch(e) { }")
 
